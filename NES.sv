@@ -258,7 +258,8 @@ parameter CONF_STR = {
 	"P2O9,Swap Joysticks,No,Yes;",
 	"P2OA,Multitap,Disabled,Enabled;",
 	"P2oJK,SNAC,Off,Controllers,Zapper,3D Glasses;",
-	"P2o02,Peripheral,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer;",
+	"P2o02,Port1 Input,None,Mouse;",
+	"P2OBE,Port2 Input,None,Zapper(Mouse),Zapper(Joy1),Zapper(Joy2),Vaus,Vaus(A-Trigger),Powerpad,Family Trainer,Mouse;",
 	"P2oL,Famicom Keyboard,No,Yes;",
 	"P2-;",
 	"P2OL,Zapper Trigger,Mouse,Joystick;",
@@ -643,12 +644,15 @@ always_comb begin
 		joypad1_data = {2'b0, mic, paddle_en & paddle_btn, joypad_bits[0]};
 		joypad2_data = joypad_bits2[0];
 
-		// periphery on port 2
+		// periphery
 		if (lightgun_en)        joypad2_data[4:3] = {trigger,light};
 		if (paddle_en)          joypad2_data[4:1] = {joypad_d4[0], paddle_btn, 1'b0, joypad_d4[0]};
-		if (status[34:32] == 6) joypad2_data[4:3] = {joypad_d4[0], joypad_d3[0]};
-		if (status[34:32] == 7) joypad2_data[4:1] = ~famtr;
+		if (status[13:11] == 6) joypad2_data[4:3] = {joypad_d4[0], joypad_d3[0]};
+		if (status[13:11] == 7) joypad2_data[4:1] = ~famtr;
 		if (fkeyb)              joypad2_data[4:1] = key_out;
+		if (mouse1_en || mouse2_en) joypad1_data[0] = ~MS_LATCH[31];
+		if (mouse2_en && !mouse1_en) joypad2_data[0] = ~MS_LATCH[31];
+
 	end
 end
 
@@ -667,6 +671,61 @@ keyboard fkey(
 	.reg_4017(key_out)
 );
 
+// SNES Mouse
+wire mouse1_en = (status[34:32] == 1);
+wire mouse2_en = (status[14:11] == 8);
+
+wire PORT_LATCH = joypad_out[0];
+wire PORT_CLK   = mouse1_en ? joypad_clock[0] : joypad_clock[1];
+
+reg  [10:0] curdx;
+reg  [10:0] curdy;
+wire [10:0] newdx = curdx + {{3{ps2_mouse[4]}},ps2_mouse[15:8]}  + ((speed == 2) ? {{3{ps2_mouse[4]}},ps2_mouse[15:8]}  : (speed == 1) ? {{4{ps2_mouse[4]}},ps2_mouse[15:9]}  : 11'd0);
+wire [10:0] newdy = curdy + {{3{ps2_mouse[5]}},ps2_mouse[23:16]} + ((speed == 2) ? {{3{ps2_mouse[5]}},ps2_mouse[23:16]} : (speed == 1) ? {{4{ps2_mouse[5]}},ps2_mouse[23:17]} : 11'd0);
+wire  [6:0] dx = curdx[10] ? -curdx[6:0] : curdx[6:0];
+wire  [6:0] dy = curdy[10] ? -curdy[6:0] : curdy[6:0];
+
+reg  [1:0] speed = 0;
+reg [31:0] MS_LATCH;
+
+always @(posedge clk) begin
+	reg old_stb, old_clk, old_latch;
+	reg sdx,sdy;
+
+	old_clk <= PORT_CLK;
+	old_latch <= PORT_LATCH;
+
+	if(old_latch & ~PORT_LATCH) begin
+		MS_LATCH <= ~{8'h00, ps2_mouse[1:0], speed, 4'b0001, sdy, dy, sdx, dx};
+		curdx <= 0;
+		curdy <= 0;
+	end
+	else begin
+		old_stb <= ps2_mouse[24];
+		if(old_stb != ps2_mouse[24]) begin
+			if($signed(newdx) > $signed(10'd127)) curdx <= 10'd127;
+			else if($signed(newdx) < $signed(-10'd127)) curdx <= -10'd127;
+			else curdx <= newdx;
+			
+			sdx <= newdx[10];
+
+			if($signed(newdy) > $signed(10'd127)) curdy <= 10'd127;
+			else if($signed(newdy) < $signed(-10'd127)) curdy <= -10'd127;
+			else curdy <= newdy;
+
+			sdy <= ~newdy[10];
+		end;
+	end
+
+	if(old_clk & ~PORT_CLK) begin
+		if(PORT_LATCH) begin
+			speed <= speed + 1'd1;
+			if(speed == 2) speed <= 0;
+		end
+		else MS_LATCH <= MS_LATCH << 1;
+	end
+end
+
 assign {UART_RTS, UART_DTR} = 1;
 wire [15:0] uart_data;
 miraclepiano miracle(
@@ -680,16 +739,16 @@ miraclepiano miracle(
 	.rxd(UART_RXD)
 );
 
-wire lightgun_en = ~status[34] & |status[33:32];
+wire lightgun_en = ~status[13] & |status[12:11];
 
 zapper zap (
 	.clk(clk),
 	.reset(reset_nes | ~lightgun_en),
-	.mode(status[33]),
+	.mode(status[12]),
 	.trigger_mode(status[21]),
 	.ps2_mouse(ps2_mouse),
-	.analog(~status[32] ? joy_analog0 : joy_analog1),
-	.analog_trigger(~status[32] ? joyA[10] : joyB[10]),
+	.analog(~status[11] ? joy_analog0 : joy_analog1),
+	.analog_trigger(~status[11] ? joyA[10] : joyB[10]),
 	.cycle(cycle),
 	.scanline(scanline),
 	.color(color),
@@ -715,8 +774,8 @@ localparam [7:0] paddle_off = 32; //middle point for Chase HQ
 
 wire [7:0] paddle_adj = paddle_off + ((paddle < 40) ? 8'd40 : (paddle > 216) ? 8'd216 : paddle);
 wire [7:0] paddle_nes = ~{paddle_adj[0],paddle_adj[1],paddle_adj[2],paddle_adj[3],paddle_adj[4],paddle_adj[5],paddle_adj[6],paddle_adj[7]};
-wire       paddle_en  = (status[34:33] == 2);
-wire       paddle_atr = paddle_en & status[32];
+wire       paddle_en  = (status[13:12] == 2);
+wire       paddle_atr = paddle_en & status[11];
 wire       paddle_btn = paddle_atr ? (joyA[4] | joyB[4] | joyC[4] | joyD[4]) : (joyA[10] | joyB[10] | joyC[10] | joyD[10]);
 
 always @(posedge clk) begin

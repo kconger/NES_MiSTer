@@ -8,7 +8,7 @@ This is an FPGA implementation of the NES/Famicom based on [FPGANES](https://git
  * Supports NTSC, PAL, and Dendy system types
  * FDS Support with expansion audio
  * Multiple Palette options
- * Zapper, Powerpad, Microphone, and Miracle Piano support
+ * Zapper, Powerpad, Microphone, SNES Mouse and Miracle Piano support
  * Supports four players
  * Setting for increasing sprites per line by 8
  * Supports up to 32 cheat codes
