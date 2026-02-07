@@ -650,7 +650,7 @@ always_comb begin
 		if (status[13:11] == 6) joypad2_data[4:3] = {joypad_d4[0], joypad_d3[0]};
 		if (status[13:11] == 7) joypad2_data[4:1] = ~famtr;
 		if (fkeyb)              joypad2_data[4:1] = key_out;
-		if (mouse1_en || mouse2_en) joypad1_data[0] = ~MS_LATCH[31];
+		if (mouse1_en)               joypad1_data[0] = ~MS_LATCH[31];
 		if (mouse2_en && !mouse1_en) joypad2_data[0] = ~MS_LATCH[31];
 
 	end
